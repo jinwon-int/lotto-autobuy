@@ -1,0 +1,35 @@
+name: Lotto 6/45 Auto Buy
+
+on:
+  schedule:
+    - cron: '0 20 * * 6'  # Every Saturday at 20:00 KST (before draw)
+  workflow_dispatch:     # Allow manual trigger for testing
+
+jobs:
+  buy-lotto:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install requests pyyaml
+
+      - name: Run Auto Buy
+        env:
+          DH_ID: ${{ secrets.DH_ID }}
+          DH_PW: ${{ secrets.DH_PW }}
+          HERMES_WEBHOOK: ${{ secrets.HERMES_WEBHOOK }}
+          DRY_RUN: ${{ secrets.DRY_RUN || 'true' }}
+        run: python lotto_buy.py
+
+      - name: Notify via Hermes
+        if: always()
+        run: |
+          echo "Purchase completed. Check logs for details."
