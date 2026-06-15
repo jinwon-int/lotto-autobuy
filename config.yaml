@@ -2,5 +2,5 @@
 dh_id: ${DH_ID}
 dh_pw: ${DH_PW}
 dry_run: true
-notify_hermes: true
 hermes_webhook: ${HERMES_WEBHOOK}
+game_count: 5
