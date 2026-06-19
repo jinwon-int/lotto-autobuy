@@ -35,18 +35,45 @@ jobs:
           "
           chmod 600 ~/.dhapi/credentials
 
-      - name: Buy Lotto 6/45
+      - name: Buy Lotto 6/45 (Hot Number Strategy)
         id: purchase
         env:
           DRY_RUN: ${{ vars.DRY_RUN || 'true' }}
         run: |
+          echo "=== Lotto 6/45 — Hot Number Strategy ==="
+          echo "Based on top-6 most frequent numbers (1,228 draws)"
+          echo ""
+
           if [ "$DRY_RUN" = "true" ]; then
-            echo "[DRY RUN] Would run: dhapi buy-lotto645 -y"
+            echo "[DRY RUN] Would buy 5 games with hot-number strategy"
             echo "Set DRY_RUN=false in repo variables to enable real purchase"
             echo "dry_run=true" >> $GITHUB_OUTPUT
             exit 0
           fi
-          dhapi buy-lotto645 -y 2>&1 | tee /tmp/lotto-result.txt
+
+          # Strategy: TOP 6 numbers (34,27,13,12,45,18) with variations
+          # Game A: TOP 6 exactly
+          echo "--- Game A: TOP 6 ---"
+          dhapi buy-lotto645 -m manual -n "34,27,13,12,45,18" -g 1 -y 2>&1
+
+          # Game B: swap 18→33 (next top number)
+          echo "--- Game B: 18→33 ---"
+          dhapi buy-lotto645 -m manual -n "34,27,13,12,45,33" -g 1 -y 2>&1
+
+          # Game C: swap 45→40 (next tier)
+          echo "--- Game C: 45→40 ---"
+          dhapi buy-lotto645 -m manual -n "34,27,13,12,40,18" -g 1 -y 2>&1
+
+          # Game D: hot+cold mix (keep 34,27,45,18; add cold 9,22)
+          echo "--- Game D: Hot+Cold Mix ---"
+          dhapi buy-lotto645 -m manual -n "34,27,9,22,45,18" -g 1 -y 2>&1
+
+          # Game E: full random for diversity
+          echo "--- Game E: Random ---"
+          dhapi buy-lotto645 -m auto -g 1 -y 2>&1
+
+          echo ""
+          echo "=== All 5 games purchased ==="
           echo "dry_run=false" >> $GITHUB_OUTPUT
 
       - name: Notify via Webhook
@@ -55,26 +82,32 @@ jobs:
           WEBHOOK_URL: ${{ secrets.HERMES_WEBHOOK }}
           WEBHOOK_SECRET: ${{ secrets.HERMES_WEBHOOK_SECRET }}
           DRY_RUN: ${{ steps.purchase.outputs.dry_run || 'true' }}
+          JOB_STATUS: ${{ job.status }}
         run: |
           if [ -z "$WEBHOOK_URL" ]; then
             echo "No webhook URL configured, skipping notification"
             exit 0
           fi
 
-          RESULT=$(cat /tmp/lotto-result.txt 2>/dev/null || echo "Purchase completed")
-          STATUS="${{ job.status }}"
-
           python3 -c "
           import os, json, hmac, hashlib, urllib.request
 
-          result = os.environ.get('RESULT', 'Purchase completed').strip()
           dry_run = os.environ.get('DRY_RUN', 'true')
+          status = os.environ.get('JOB_STATUS', 'unknown')
+
+          if dry_run == 'true':
+              msg = '🧪 [Lotto AutoBuy] DRY RUN — Hot Number Strategy'
+          elif status == 'success':
+              msg = '🎰 [Lotto AutoBuy] 5-game purchase complete!'
+          else:
+              msg = f'❌ [Lotto AutoBuy] Purchase failed (status: {status})'
 
           payload = json.dumps({
-              'message': f'[Lotto AutoBuy] {\"DRY RUN\" if dry_run == \"true\" else \"Purchase complete\"}',
-              'status': 'success',
+              'message': msg,
+              'status': 'success' if status == 'success' else 'error',
               'data': {
-                  'result': result[-500:],
+                  'strategy': 'hot-number-top6',
+                  'games': ['34,27,13,12,45,18', '34,27,13,12,45,33', '34,27,13,12,40,18', '34,27,9,22,45,18', 'auto'],
                   'dry_run': dry_run == 'true'
               }
           }).encode()
