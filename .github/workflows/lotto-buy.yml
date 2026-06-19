@@ -11,27 +11,40 @@ jobs:
   buy-lotto:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
+      - name: Install dhapi
+        run: pip install dhapi
 
-      - name: Run Auto Buy
+      - name: Set up credentials
         env:
           DH_ID: ${{ secrets.DH_ID }}
           DH_PW: ${{ secrets.DH_PW }}
-          HERMES_WEBHOOK: ${{ secrets.HERMES_WEBHOOK }}
-          # DRY_RUN is non-sensitive config; use a repository variable, not a secret.
-          # Set vars.DRY_RUN to 'false' to enable real purchases. Defaults to 'true' (safe).
+        run: |
+          mkdir -p ~/.dhapi
+          python3 -c "
+          import os
+          uid = os.environ['DH_ID']
+          pw = os.environ['DH_PW']
+          toml = f'[default]\\nusername = \"{uid}\"\\npassword = \"{pw}\"\\n'
+          with open(os.path.expanduser('~/.dhapi/credentials'), 'w') as f:
+              f.write(toml)
+          "
+          chmod 600 ~/.dhapi/credentials
+
+      - name: Buy Lotto 6/45
+        env:
           DRY_RUN: ${{ vars.DRY_RUN || 'true' }}
-        run: python lotto_buy.py
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "[DRY RUN] Would run: dhapi buy-lotto645 -y"
+            echo "Set DRY_RUN=false in repo variables to enable real purchase"
+            exit 0
+          fi
+          dhapi buy-lotto645 -y
 
       - name: Notify via Hermes
         if: always()
