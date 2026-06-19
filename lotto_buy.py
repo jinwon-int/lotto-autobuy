@@ -11,8 +11,12 @@ import yaml
 import sys
 import os
 import time
+import random
 from datetime import datetime
 from typing import Dict, List, Any
+
+# Max games per single purchase enforced by dhlottery
+MAX_GAMES_PER_PURCHASE = 5
 
 class LottoAutoBuy:
     def __init__(self):
@@ -23,20 +27,49 @@ class LottoAutoBuy:
             'Content-Type': 'application/x-www-form-urlencoded'
         })
         self.config = self.load_config()
-        self.dry_run = os.getenv('DRY_RUN', 'true').lower() == 'true'
-        self.hermes_webhook = os.getenv('HERMES_WEBHOOK')
+        self.hermes_webhook = self.config.get('hermes_webhook')
         self.base_url = "https://ol.dhlottery.co.kr"
 
+        # dry_run resolves from env first (DRY_RUN), then config.yaml, default true (safe)
+        env_dry_run = os.getenv('DRY_RUN')
+        if env_dry_run is not None:
+            self.dry_run = env_dry_run.lower() == 'true'
+        else:
+            self.dry_run = bool(self.config.get('dry_run', True))
+
+    @staticmethod
+    def _expand_env(value: Any) -> Any:
+        """Replace ${VAR} placeholders with the matching environment variable.
+
+        Returns None when a placeholder cannot be resolved so callers can
+        fall back to defaults instead of using the literal "${VAR}" text.
+        """
+        if isinstance(value, str):
+            expanded = os.path.expandvars(value)
+            if '${' in expanded:  # unresolved placeholder, e.g. env var not set
+                return None
+            return expanded
+        return value
+
     def load_config(self) -> Dict:
+        config = {}
         try:
             with open('config.yaml', 'r', encoding='utf-8') as f:
-                return yaml.safe_load(f)
+                config = yaml.safe_load(f) or {}
         except Exception:
-            return {
-                'dh_id': os.getenv('DH_ID'),
-                'dh_pw': os.getenv('DH_PW'),
-                'game_count': int(os.getenv('GAME_COUNT', 5))
-            }
+            pass
+
+        # Expand ${VAR} placeholders loaded from yaml (safe_load keeps them literal)
+        config = {k: self._expand_env(v) for k, v in config.items()}
+        # Drop keys that failed to resolve so setdefault fallbacks apply
+        config = {k: v for k, v in config.items() if v is not None}
+
+        # Fall back to env vars when a value is missing or left as a placeholder
+        config.setdefault('dh_id', os.getenv('DH_ID'))
+        config.setdefault('dh_pw', os.getenv('DH_PW'))
+        config.setdefault('hermes_webhook', os.getenv('HERMES_WEBHOOK'))
+        config.setdefault('game_count', int(os.getenv('GAME_COUNT', 5)))
+        return config
 
     def notify(self, message: str, status: str = "info", data: Dict = None):
         if not self.hermes_webhook:
@@ -87,12 +120,22 @@ class LottoAutoBuy:
 
     def generate_numbers(self) -> List[int]:
         """Generate 6 unique random numbers (1-45)"""
-        import random
         numbers = random.sample(range(1, 46), 6)
         numbers.sort()
         return numbers
 
     def purchase(self, game_count: int = 5) -> bool:
+        # dhlottery allows at most 5 games per single purchase
+        if game_count > MAX_GAMES_PER_PURCHASE:
+            self.notify(
+                f"game_count {game_count} exceeds max {MAX_GAMES_PER_PURCHASE}; capping",
+                "info",
+            )
+            game_count = MAX_GAMES_PER_PURCHASE
+        if game_count < 1:
+            self.notify(f"Invalid game_count {game_count}; nothing to buy", "error")
+            return False
+
         self.notify(f"Starting purchase for {game_count} games (dry_run={self.dry_run})", "info")
         
         if not self.login():

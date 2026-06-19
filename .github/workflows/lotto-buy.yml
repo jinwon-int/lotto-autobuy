@@ -2,7 +2,9 @@ name: Lotto 6/45 Auto Buy
 
 on:
   schedule:
-    - cron: '0 20 * * 6'  # Every Saturday at 20:00 KST (before draw)
+    # GitHub Actions cron runs in UTC. 09:00 UTC = 18:00 KST (KST = UTC+9).
+    # Saturday 18:00 KST is before sales close (20:00 KST) and the draw (~20:35 KST).
+    - cron: '0 9 * * 6'  # Every Saturday 18:00 KST
   workflow_dispatch:     # Allow manual trigger for testing
 
 jobs:
@@ -19,14 +21,16 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install requests pyyaml
+          pip install -r requirements.txt
 
       - name: Run Auto Buy
         env:
           DH_ID: ${{ secrets.DH_ID }}
           DH_PW: ${{ secrets.DH_PW }}
           HERMES_WEBHOOK: ${{ secrets.HERMES_WEBHOOK }}
-          DRY_RUN: ${{ secrets.DRY_RUN || 'true' }}
+          # DRY_RUN is non-sensitive config; use a repository variable, not a secret.
+          # Set vars.DRY_RUN to 'false' to enable real purchases. Defaults to 'true' (safe).
+          DRY_RUN: ${{ vars.DRY_RUN || 'true' }}
         run: python lotto_buy.py
 
       - name: Notify via Hermes
