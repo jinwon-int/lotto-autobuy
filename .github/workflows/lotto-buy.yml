@@ -36,17 +36,62 @@ jobs:
           chmod 600 ~/.dhapi/credentials
 
       - name: Buy Lotto 6/45
+        id: purchase
         env:
           DRY_RUN: ${{ vars.DRY_RUN || 'true' }}
         run: |
           if [ "$DRY_RUN" = "true" ]; then
             echo "[DRY RUN] Would run: dhapi buy-lotto645 -y"
             echo "Set DRY_RUN=false in repo variables to enable real purchase"
+            echo "dry_run=true" >> $GITHUB_OUTPUT
             exit 0
           fi
-          dhapi buy-lotto645 -y
+          dhapi buy-lotto645 -y 2>&1 | tee /tmp/lotto-result.txt
+          echo "dry_run=false" >> $GITHUB_OUTPUT
 
-      - name: Notify via Hermes
+      - name: Notify via Webhook
         if: always()
+        env:
+          WEBHOOK_URL: ${{ secrets.HERMES_WEBHOOK }}
+          WEBHOOK_SECRET: ${{ secrets.HERMES_WEBHOOK_SECRET }}
+          DRY_RUN: ${{ steps.purchase.outputs.dry_run || 'true' }}
         run: |
-          echo "Purchase completed. Check logs for details."
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "No webhook URL configured, skipping notification"
+            exit 0
+          fi
+
+          RESULT=$(cat /tmp/lotto-result.txt 2>/dev/null || echo "Purchase completed")
+          STATUS="${{ job.status }}"
+
+          python3 -c "
+          import os, json, hmac, hashlib, urllib.request
+
+          result = os.environ.get('RESULT', 'Purchase completed').strip()
+          dry_run = os.environ.get('DRY_RUN', 'true')
+
+          payload = json.dumps({
+              'message': f'[Lotto AutoBuy] {\"DRY RUN\" if dry_run == \"true\" else \"Purchase complete\"}',
+              'status': 'success',
+              'data': {
+                  'result': result[-500:],
+                  'dry_run': dry_run == 'true'
+              }
+          }).encode()
+
+          secret = os.environ['WEBHOOK_SECRET'].encode()
+          sig = hmac.new(secret, payload, hashlib.sha256).hexdigest()
+
+          req = urllib.request.Request(
+              os.environ['WEBHOOK_URL'],
+              data=payload,
+              headers={
+                  'Content-Type': 'application/json',
+                  'X-Hub-Signature-256': f'sha256={sig}',
+                  'User-Agent': 'Mozilla/5.0 (GitHub Actions Lotto AutoBuy)'
+              },
+              method='POST'
+          )
+          resp = urllib.request.urlopen(req, timeout=15)
+          print(f'Webhook response: {resp.status} {resp.read().decode()}')
+          "
