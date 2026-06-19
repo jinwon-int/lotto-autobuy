@@ -35,45 +35,26 @@ jobs:
           "
           chmod 600 ~/.dhapi/credentials
 
-      - name: Buy Lotto 6/45 (Hot Number Strategy)
+      - name: Buy Lotto 6/45 (Top-6 ×5)
         id: purchase
         env:
           DRY_RUN: ${{ vars.DRY_RUN || 'true' }}
         run: |
-          echo "=== Lotto 6/45 — Hot Number Strategy ==="
-          echo "Based on top-6 most frequent numbers (1,228 draws)"
+          echo "=== Lotto 6/45 — TOP 6 × 5전략 ==="
+          echo "번호: 34, 27, 13, 12, 45, 18"
+          echo "근거: 1,228회 기준 최다 출현 빈도"
+          echo "전략: 5게임 동일 번호 → 1등 시 당첨금 ×5"
           echo ""
 
           if [ "$DRY_RUN" = "true" ]; then
-            echo "[DRY RUN] Would buy 5 games with hot-number strategy"
+            echo "[DRY RUN] Would buy: 34,27,13,12,45,18 ×5"
             echo "Set DRY_RUN=false in repo variables to enable real purchase"
             echo "dry_run=true" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          # Strategy: TOP 6 numbers (34,27,13,12,45,18) with variations
-          # Game A: TOP 6 exactly
-          echo "--- Game A: TOP 6 ---"
-          dhapi buy-lotto645 -m manual -n "34,27,13,12,45,18" -g 1 -y 2>&1
-
-          # Game B: swap 18→33 (next top number)
-          echo "--- Game B: 18→33 ---"
-          dhapi buy-lotto645 -m manual -n "34,27,13,12,45,33" -g 1 -y 2>&1
-
-          # Game C: swap 45→40 (next tier)
-          echo "--- Game C: 45→40 ---"
-          dhapi buy-lotto645 -m manual -n "34,27,13,12,40,18" -g 1 -y 2>&1
-
-          # Game D: hot+cold mix (keep 34,27,45,18; add cold 9,22)
-          echo "--- Game D: Hot+Cold Mix ---"
-          dhapi buy-lotto645 -m manual -n "34,27,9,22,45,18" -g 1 -y 2>&1
-
-          # Game E: full random for diversity
-          echo "--- Game E: Random ---"
-          dhapi buy-lotto645 -m auto -g 1 -y 2>&1
-
-          echo ""
-          echo "=== All 5 games purchased ==="
+          dhapi buy-lotto645 -m manual -n "34,27,13,12,45,18" -g 5 -y 2>&1
+          echo "=== 5게임 구매 완료 ==="
           echo "dry_run=false" >> $GITHUB_OUTPUT
 
       - name: Notify via Webhook
@@ -106,8 +87,10 @@ jobs:
               'message': msg,
               'status': 'success' if status == 'success' else 'error',
               'data': {
-                  'strategy': 'hot-number-top6',
-                  'games': ['34,27,13,12,45,18', '34,27,13,12,45,33', '34,27,13,12,40,18', '34,27,9,22,45,18', 'auto'],
+                  'strategy': 'top6-identical-5x',
+                  'numbers': '34,27,13,12,45,18',
+                  'games': 5,
+                  'note': '1등시 당첨금 ×5',
                   'dry_run': dry_run == 'true'
               }
           }).encode()
