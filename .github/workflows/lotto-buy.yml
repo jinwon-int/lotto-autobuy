@@ -35,25 +35,25 @@ jobs:
           "
           chmod 600 ~/.dhapi/credentials
 
-      - name: Buy Lotto 6/45 (Top-6 ×5)
+      - name: Buy Lotto 6/45 (진원님 선택 ×5)
         id: purchase
         env:
           DRY_RUN: ${{ vars.DRY_RUN || 'true' }}
         run: |
-          echo "=== Lotto 6/45 — TOP 6 × 5전략 ==="
-          echo "번호: 34, 27, 13, 12, 45, 18"
-          echo "근거: 1,228회 기준 최다 출현 빈도"
+          echo "=== Lotto 6/45 — 진원님 선택 ×5 ==="
+          echo "번호: 4, 6, 7, 11, 12, 23"
+          echo "근거: 당첨금 분할 리스크 최소화 (인기번호 회피)"
           echo "전략: 5게임 동일 번호 → 1등 시 당첨금 ×5"
           echo ""
 
           if [ "$DRY_RUN" = "true" ]; then
-            echo "[DRY RUN] Would buy: 34,27,13,12,45,18 ×5"
+            echo "[DRY RUN] Would buy: 4,6,7,11,12,23 ×5"
             echo "Set DRY_RUN=false in repo variables to enable real purchase"
             echo "dry_run=true" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          dhapi buy-lotto645 -m manual -n "34,27,13,12,45,18" -g 5 -y 2>&1
+          dhapi buy-lotto645 -m manual -n "4,6,7,11,12,23" -g 5 -y 2>&1
           echo "=== 5게임 구매 완료 ==="
           echo "dry_run=false" >> $GITHUB_OUTPUT
 
@@ -77,7 +77,7 @@ jobs:
           status = os.environ.get('JOB_STATUS', 'unknown')
 
           if dry_run == 'true':
-              msg = '🧪 [Lotto AutoBuy] DRY RUN — Hot Number Strategy'
+              msg = '🧪 [Lotto AutoBuy] DRY RUN — 진원님 선택'
           elif status == 'success':
               msg = '🎰 [Lotto AutoBuy] 5-game purchase complete!'
           else:
@@ -87,10 +87,10 @@ jobs:
               'message': msg,
               'status': 'success' if status == 'success' else 'error',
               'data': {
-                  'strategy': 'top6-identical-5x',
-                  'numbers': '34,27,13,12,45,18',
+                  'strategy': 'jinon-pick-5x',
+                  'numbers': '4,6,7,11,12,23',
                   'games': 5,
-                  'note': '1등시 당첨금 ×5',
+                  'note': '1등시 당첨금 ×5, 인기번호 회피로 분할 리스크 최소화',
                   'dry_run': dry_run == 'true'
               }
           }).encode()
