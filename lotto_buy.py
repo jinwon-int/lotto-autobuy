@@ -1,53 +1,59 @@
 #!/usr/bin/env python3
 """
-Lotto 6/45 Auto Buy with Hermes notification
-Production-ready version for jinwon-int/lotto-autobuy
-Fully integrated login, cart, and purchase logic
-Based on roeniss/dhlottery-api + kkd927
+Lotto 6/45 Auto Buy with Hermes notification.
+
+Strategy C v2 generates a new audited anti-crowd set for each draw and stores
+that exact purchase in a state file so the winning-number checker compares the
+right games later.
 """
-import requests
+from __future__ import annotations
+
 import json
-import yaml
-import sys
 import os
-import time
+import shlex
+import subprocess
+import sys
 from datetime import datetime
-from typing import Dict, List, Any
+from pathlib import Path
+from typing import Any, Dict, List
 
-# Max games per single purchase enforced by dhlottery
-MAX_GAMES_PER_PURCHASE = 5
+import requests
+import yaml
 
-# Strategy C: anti-crowd diversified combinations.
-# These combinations intentionally avoid the prior TOP6 hot-number set
-# (34, 27, 13, 12, 45, 18), avoid consecutive/arithmetic visual patterns,
-# and include several >31 numbers to reduce birthday-date crowding.
-STRATEGY_C_NUMBERS: List[List[int]] = [
-    [2, 19, 31, 33, 40, 44],
-    [5, 21, 28, 35, 39, 43],
-    [8, 23, 30, 32, 37, 42],
-    [10, 24, 29, 36, 38, 41],
-    [14, 20, 26, 33, 39, 44],
-]
+from lotto_strategy import (
+    MAX_GAMES_PER_PURCHASE,
+    build_dhapi_command,
+    default_state_path,
+    generate_strategy_c_games,
+    latest_draw_no,
+    load_purchase_state,
+    save_purchase_state,
+)
 
 
 class LottoAutoBuy:
     def __init__(self):
-        self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Referer': 'https://dhlottery.co.kr/',
-            'Content-Type': 'application/x-www-form-urlencoded'
-        })
         self.config = self.load_config()
-        self.hermes_webhook = self.config.get('hermes_webhook')
-        self.base_url = "https://ol.dhlottery.co.kr"
+        self.hermes_webhook = self.config.get("hermes_webhook")
+        self.state_file = Path(self.config.get("state_file") or default_state_path()).expanduser()
 
         # dry_run resolves from env first (DRY_RUN), then config.yaml, default true (safe)
-        env_dry_run = os.getenv('DRY_RUN')
+        env_dry_run = os.getenv("DRY_RUN")
         if env_dry_run is not None:
-            self.dry_run = env_dry_run.lower() == 'true'
+            self.dry_run = self._parse_dry_run(env_dry_run)
         else:
-            self.dry_run = bool(self.config.get('dry_run', True))
+            self.dry_run = self._parse_dry_run(self.config.get("dry_run", True))
+
+    @staticmethod
+    def _parse_dry_run(value: Any) -> bool:
+        """Fail-safe dry-run parser.
+
+        Real purchase requires an explicit normalized false value. Everything
+        else remains dry-run so typos like "true ", "1", or "yes" cannot buy.
+        """
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() != "false"
 
     @staticmethod
     def _expand_env(value: Any) -> Any:
@@ -58,7 +64,7 @@ class LottoAutoBuy:
         """
         if isinstance(value, str):
             expanded = os.path.expandvars(value)
-            if '${' in expanded:  # unresolved placeholder, e.g. env var not set
+            if "${" in expanded:  # unresolved placeholder, e.g. env var not set
                 return None
             return expanded
         return value
@@ -66,7 +72,7 @@ class LottoAutoBuy:
     def load_config(self) -> Dict:
         config = {}
         try:
-            with open('config.yaml', 'r', encoding='utf-8') as f:
+            with open("config.yaml", "r", encoding="utf-8") as f:
                 config = yaml.safe_load(f) or {}
         except Exception:
             pass
@@ -77,13 +83,14 @@ class LottoAutoBuy:
         config = {k: v for k, v in config.items() if v is not None}
 
         # Fall back to env vars when a value is missing or left as a placeholder
-        config.setdefault('dh_id', os.getenv('DH_ID'))
-        config.setdefault('dh_pw', os.getenv('DH_PW'))
-        config.setdefault('hermes_webhook', os.getenv('HERMES_WEBHOOK'))
-        config.setdefault('game_count', int(os.getenv('GAME_COUNT', 5)))
+        config.setdefault("hermes_webhook", os.getenv("HERMES_WEBHOOK"))
+        config.setdefault("game_count", int(os.getenv("GAME_COUNT", MAX_GAMES_PER_PURCHASE)))
+        config.setdefault("draw_no", os.getenv("LOTTO_DRAW_NO"))
+        config.setdefault("seed_salt", os.getenv("LOTTO_SEED_SALT", ""))
+        config.setdefault("state_file", os.getenv("LOTTO_STATE_FILE"))
         return config
 
-    def notify(self, message: str, status: str = "info", data: Dict = None):
+    def notify(self, message: str, status: str = "info", data: Dict | None = None):
         if not self.hermes_webhook:
             print(f"[{status.upper()}] {message}")
             if data:
@@ -94,50 +101,46 @@ class LottoAutoBuy:
                 "message": f"[Lotto AutoBuy] {message}",
                 "status": status,
                 "timestamp": datetime.now().isoformat(),
-                "data": data or {}
+                "data": data or {},
             }
             requests.post(self.hermes_webhook, json=payload, timeout=10)
         except Exception as e:
             print(f"Notification failed: {e}")
 
-    def login(self) -> bool:
-        if self.dry_run:
-            self.notify("Dry-run mode - skipping real login", "info")
-            return True
+    def resolve_draw_no(self) -> int:
+        configured = self.config.get("draw_no")
+        if configured:
+            return int(configured)
+        return latest_draw_no()
 
-        self.notify("Logging into dhlottery...", "info")
-
-        try:
-            data = {
-                'id': self.config.get('dh_id'),
-                'password': self.config.get('dh_pw'),
-                'check': 'on'
-            }
-
-            response = self.session.post(f"{self.base_url}/login.do", data=data, timeout=15)
-
-            if response.status_code == 200 and ("로그인 성공" in response.text or "main.do" in response.url):
-                self.notify("Login successful", "success")
-                return True
-            else:
-                self.notify("Login failed - check credentials or network", "error", {
-                    "status_code": response.status_code,
-                    "response": response.text[:200]
-                })
-                return False
-
-        except Exception as e:
-            self.notify(f"Login exception: {str(e)}", "error")
-            return False
-
-    def get_strategy_numbers(self, game_count: int = MAX_GAMES_PER_PURCHASE) -> List[List[int]]:
-        """Return Strategy C combinations for the requested number of games."""
-        if game_count < 1:
+    def load_recent_games(self, draw_no: int) -> List[List[int]]:
+        if not self.state_file.exists():
             return []
-        return [numbers[:] for numbers in STRATEGY_C_NUMBERS[:game_count]]
+        try:
+            state = load_purchase_state(self.state_file)
+        except Exception as exc:
+            self.notify(f"Ignoring unreadable prior state: {exc}", "info")
+            return []
+        # Same draw should be reproducible, not forced away from itself.
+        if int(state.get("draw_no", 0)) == int(draw_no):
+            return []
+        return state.get("games", [])
+
+    def get_strategy_numbers(
+        self,
+        game_count: int = MAX_GAMES_PER_PURCHASE,
+        *,
+        draw_no: int | None = None,
+    ) -> List[List[int]]:
+        draw = draw_no or self.resolve_draw_no()
+        return generate_strategy_c_games(
+            draw_no=draw,
+            game_count=game_count,
+            recent_games=self.load_recent_games(draw),
+            seed_salt=str(self.config.get("seed_salt") or ""),
+        )
 
     def purchase(self, game_count: int = MAX_GAMES_PER_PURCHASE) -> bool:
-        # dhlottery allows at most 5 games per single purchase
         if game_count > MAX_GAMES_PER_PURCHASE:
             self.notify(
                 f"game_count {game_count} exceeds max {MAX_GAMES_PER_PURCHASE}; capping",
@@ -148,32 +151,68 @@ class LottoAutoBuy:
             self.notify(f"Invalid game_count {game_count}; nothing to buy", "error")
             return False
 
+        draw_no = self.resolve_draw_no()
+        games = self.get_strategy_numbers(game_count, draw_no=draw_no)
+        command = build_dhapi_command(games)
+        command_text = " ".join(shlex.quote(part) for part in command)
+
         self.notify(
-            f"Starting Strategy C purchase for {game_count} games (dry_run={self.dry_run})",
+            f"Starting Strategy C v2 purchase for draw {draw_no} "
+            f"({game_count} games, dry_run={self.dry_run})",
             "info",
+            {"draw_no": draw_no, "games": games, "command": command},
         )
 
-        if not self.login():
+        if self.dry_run:
+            state = save_purchase_state(
+                self.state_file,
+                draw_no=draw_no,
+                games=games,
+                status="dry_run",
+                command=command,
+            )
+            self.notify(
+                "Dry-run only; no purchase executed. State written for verification.",
+                "success",
+                {"state_file": str(self.state_file), "state": state, "command_text": command_text},
+            )
+            return True
+
+        try:
+            result = subprocess.run(command, text=True, capture_output=True, check=True, timeout=120)
+        except subprocess.CalledProcessError as exc:
+            self.notify(
+                "dhapi purchase failed",
+                "error",
+                {
+                    "command": command,
+                    "returncode": exc.returncode,
+                    "stdout": exc.stdout[-1000:] if exc.stdout else "",
+                    "stderr": exc.stderr[-1000:] if exc.stderr else "",
+                },
+            )
+            return False
+        except Exception as exc:
+            self.notify(f"Purchase exception: {exc}", "error", {"command": command})
             return False
 
-        purchased = self.get_strategy_numbers(game_count)
-        for i, numbers in enumerate(purchased, start=1):
-            if self.dry_run:
-                self.notify(f"Dry-run Strategy C game {i}: {numbers}", "info")
-                time.sleep(0.5)
-                continue
-
-            # Real purchase logic (simplified - full cart and payment API would be here)
-            # Operational purchase currently uses dhapi directly from 대교 Hermes cronjob.
-            self.notify(f"Game {i} purchased with Strategy C numbers {numbers}", "success")
-            time.sleep(1)  # Rate limiting for safety
-
-        self.notify("All Strategy C games processed", "success", {
-            "strategy": "strategy-c-anti-crowd-diversified",
-            "game_count": game_count,
-            "numbers": purchased,
-            "dry_run": self.dry_run
-        })
+        state = save_purchase_state(
+            self.state_file,
+            draw_no=draw_no,
+            games=games,
+            status="purchased",
+            command=command,
+        )
+        self.notify(
+            "Strategy C v2 purchase completed and state saved",
+            "success",
+            {
+                "state_file": str(self.state_file),
+                "state": state,
+                "stdout": result.stdout[-1000:] if result.stdout else "",
+                "stderr": result.stderr[-1000:] if result.stderr else "",
+            },
+        )
         return True
 
 
@@ -182,11 +221,12 @@ def main():
     buyer = LottoAutoBuy()
 
     try:
-        success = buyer.purchase(buyer.config.get('game_count', MAX_GAMES_PER_PURCHASE))
+        success = buyer.purchase(buyer.config.get("game_count", MAX_GAMES_PER_PURCHASE))
         if success:
             buyer.notify("Lotto 6/45 AutoBuy completed successfully", "success")
         else:
             buyer.notify("Lotto 6/45 AutoBuy failed", "error")
+            sys.exit(1)
     except Exception as e:
         buyer.notify(f"Critical error: {str(e)}", "error")
         print(f"Critical Error: {e}")
