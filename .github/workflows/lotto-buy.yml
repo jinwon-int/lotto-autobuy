@@ -13,16 +13,23 @@ on:
 jobs:
   buy-lotto:
     runs-on: ubuntu-latest
+    env:
+      LOTTO_STATE_FILE: ${{ runner.temp }}/lotto-last-purchase.json
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      - name: Install dhapi
-        run: pip install dhapi
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install dhapi
 
-      - name: Set up credentials
+      - name: Set up dhapi credentials
         env:
           DH_ID: ${{ secrets.DH_ID }}
           DH_PW: ${{ secrets.DH_PW }}
@@ -38,36 +45,26 @@ jobs:
           "
           chmod 600 ~/.dhapi/credentials
 
-      - name: Buy Lotto 6/45 (Strategy C diversified)
+      - name: Buy Lotto 6/45 (Strategy C v2 dynamic)
         id: purchase
         env:
           DRY_RUN: ${{ vars.DRY_RUN || 'true' }}
+          HERMES_WEBHOOK: ""
         run: |
-          echo "=== Lotto 6/45 — Strategy C diversified anti-crowd ==="
-          echo "게임 1: 2,19,31,33,40,44"
-          echo "게임 2: 5,21,28,35,39,43"
-          echo "게임 3: 8,23,30,32,37,42"
-          echo "게임 4: 10,24,29,36,38,41"
-          echo "게임 5: 14,20,26,33,39,44"
-          echo "근거: TOP6/인기번호 몰빵의 공동당첨 분할 리스크 회피 + 1등 도달 확률 5배"
-          echo ""
-
-          if [ "$DRY_RUN" = "true" ]; then
-            echo "[DRY RUN] Would buy Strategy C diversified 5 games"
-            echo "Set DRY_RUN=false in repo variables to enable real purchase"
-            echo "dry_run=true" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          dhapi buy-lotto645 \
-            '2,19,31,33,40,44' \
-            '5,21,28,35,39,43' \
-            '8,23,30,32,37,42' \
-            '10,24,29,36,38,41' \
-            '14,20,26,33,39,44' \
-            -y 2>&1
-          echo "=== Strategy C 5게임 구매 완료 ==="
-          echo "dry_run=false" >> $GITHUB_OUTPUT
+          echo "=== Lotto 6/45 — Strategy C v2 dynamic anti-crowd ==="
+          python lotto_buy.py
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          state_file = os.environ['LOTTO_STATE_FILE']
+          with open(state_file, encoding='utf-8') as f:
+              state = json.load(f)
+          status = state.get('status', 'unknown')
+          print(f"dry_run={'false' if status == 'purchased' else 'true'}")
+          print(f"purchase_status={status}")
+          print(f"state_file={state_file}")
+          PY
+          echo "=== Purchase state ==="
+          cat "$LOTTO_STATE_FILE"
 
       - name: Notify via Webhook
         if: always()
@@ -75,6 +72,7 @@ jobs:
           WEBHOOK_URL: ${{ secrets.HERMES_WEBHOOK }}
           WEBHOOK_SECRET: ${{ secrets.HERMES_WEBHOOK_SECRET }}
           DRY_RUN: ${{ steps.purchase.outputs.dry_run || 'true' }}
+          STATE_FILE: ${{ steps.purchase.outputs.state_file }}
           JOB_STATUS: ${{ job.status }}
         run: |
           if [ -z "$WEBHOOK_URL" ]; then
@@ -87,11 +85,16 @@ jobs:
 
           dry_run = os.environ.get('DRY_RUN', 'true')
           status = os.environ.get('JOB_STATUS', 'unknown')
+          state_file = os.environ.get('STATE_FILE')
+          state = {}
+          if state_file and os.path.exists(state_file):
+              with open(state_file) as f:
+                  state = json.load(f)
 
           if dry_run == 'true':
-              msg = '🧪 [Lotto AutoBuy] DRY RUN — Strategy C diversified'
+              msg = '🧪 [Lotto AutoBuy] DRY RUN — Strategy C v2 dynamic'
           elif status == 'success':
-              msg = '🎰 [Lotto AutoBuy] Strategy C 5-game purchase complete!'
+              msg = '🎰 [Lotto AutoBuy] Strategy C v2 purchase complete!'
           else:
               msg = f'❌ [Lotto AutoBuy] Purchase failed (status: {status})'
 
@@ -99,16 +102,11 @@ jobs:
               'message': msg,
               'status': 'success' if status == 'success' else 'error',
               'data': {
-                  'strategy': 'strategy-c-anti-crowd-diversified',
-                  'numbers': [
-                      '2,19,31,33,40,44',
-                      '5,21,28,35,39,43',
-                      '8,23,30,32,37,42',
-                      '10,24,29,36,38,41',
-                      '14,20,26,33,39,44',
-                  ],
-                  'games': 5,
-                  'note': 'TOP6/인기번호 몰빵의 공동당첨 분할 리스크 회피 + 1등 도달 확률 5배',
+                  'strategy': state.get('strategy', 'strategy-c-v2-dynamic-anti-crowd'),
+                  'draw_no': state.get('draw_no'),
+                  'numbers': state.get('games', []),
+                  'games': len(state.get('games', [])),
+                  'note': '회차별 anti-crowd 5조합 생성 + state 저장',
                   'dry_run': dry_run == 'true'
               }
           }).encode()
