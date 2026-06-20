@@ -11,12 +11,24 @@ import yaml
 import sys
 import os
 import time
-import random
 from datetime import datetime
 from typing import Dict, List, Any
 
 # Max games per single purchase enforced by dhlottery
 MAX_GAMES_PER_PURCHASE = 5
+
+# Strategy C: anti-crowd diversified combinations.
+# These combinations intentionally avoid the prior TOP6 hot-number set
+# (34, 27, 13, 12, 45, 18), avoid consecutive/arithmetic visual patterns,
+# and include several >31 numbers to reduce birthday-date crowding.
+STRATEGY_C_NUMBERS: List[List[int]] = [
+    [2, 19, 31, 33, 40, 44],
+    [5, 21, 28, 35, 39, 43],
+    [8, 23, 30, 32, 37, 42],
+    [10, 24, 29, 36, 38, 41],
+    [14, 20, 26, 33, 39, 44],
+]
+
 
 class LottoAutoBuy:
     def __init__(self):
@@ -94,16 +106,16 @@ class LottoAutoBuy:
             return True
 
         self.notify("Logging into dhlottery...", "info")
-        
+
         try:
             data = {
                 'id': self.config.get('dh_id'),
                 'password': self.config.get('dh_pw'),
                 'check': 'on'
             }
-            
+
             response = self.session.post(f"{self.base_url}/login.do", data=data, timeout=15)
-            
+
             if response.status_code == 200 and ("로그인 성공" in response.text or "main.do" in response.url):
                 self.notify("Login successful", "success")
                 return True
@@ -113,18 +125,18 @@ class LottoAutoBuy:
                     "response": response.text[:200]
                 })
                 return False
-                
+
         except Exception as e:
             self.notify(f"Login exception: {str(e)}", "error")
             return False
 
-    def generate_numbers(self) -> List[int]:
-        """Generate 6 unique random numbers (1-45)"""
-        numbers = random.sample(range(1, 46), 6)
-        numbers.sort()
-        return numbers
+    def get_strategy_numbers(self, game_count: int = MAX_GAMES_PER_PURCHASE) -> List[List[int]]:
+        """Return Strategy C combinations for the requested number of games."""
+        if game_count < 1:
+            return []
+        return [numbers[:] for numbers in STRATEGY_C_NUMBERS[:game_count]]
 
-    def purchase(self, game_count: int = 5) -> bool:
+    def purchase(self, game_count: int = MAX_GAMES_PER_PURCHASE) -> bool:
         # dhlottery allows at most 5 games per single purchase
         if game_count > MAX_GAMES_PER_PURCHASE:
             self.notify(
@@ -136,39 +148,41 @@ class LottoAutoBuy:
             self.notify(f"Invalid game_count {game_count}; nothing to buy", "error")
             return False
 
-        self.notify(f"Starting purchase for {game_count} games (dry_run={self.dry_run})", "info")
-        
+        self.notify(
+            f"Starting Strategy C purchase for {game_count} games (dry_run={self.dry_run})",
+            "info",
+        )
+
         if not self.login():
             return False
 
-        purchased = []
-        for i in range(game_count):
-            numbers = self.generate_numbers()
-            purchased.append(numbers)
-            
+        purchased = self.get_strategy_numbers(game_count)
+        for i, numbers in enumerate(purchased, start=1):
             if self.dry_run:
-                self.notify(f"Dry-run game {i+1}: {numbers}", "info")
+                self.notify(f"Dry-run Strategy C game {i}: {numbers}", "info")
                 time.sleep(0.5)
                 continue
 
             # Real purchase logic (simplified - full cart and payment API would be here)
-            # Using roeniss style API calls for add to cart and buy
-            self.notify(f"Game {i+1} purchased with numbers {numbers}", "success")
+            # Operational purchase currently uses dhapi directly from 대교 Hermes cronjob.
+            self.notify(f"Game {i} purchased with Strategy C numbers {numbers}", "success")
             time.sleep(1)  # Rate limiting for safety
 
-        self.notify("All games processed", "success", {
+        self.notify("All Strategy C games processed", "success", {
+            "strategy": "strategy-c-anti-crowd-diversified",
             "game_count": game_count,
             "numbers": purchased,
             "dry_run": self.dry_run
         })
         return True
 
+
 def main():
     print(f"[{datetime.now()}] Lotto 6/45 AutoBuy started")
     buyer = LottoAutoBuy()
-    
+
     try:
-        success = buyer.purchase(buyer.config.get('game_count', 5))
+        success = buyer.purchase(buyer.config.get('game_count', MAX_GAMES_PER_PURCHASE))
         if success:
             buyer.notify("Lotto 6/45 AutoBuy completed successfully", "success")
         else:
@@ -177,6 +191,7 @@ def main():
         buyer.notify(f"Critical error: {str(e)}", "error")
         print(f"Critical Error: {e}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

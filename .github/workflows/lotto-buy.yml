@@ -32,32 +32,41 @@ jobs:
           import os
           uid = os.environ['DH_ID']
           pw = os.environ['DH_PW']
-          toml = f'[default]\\nusername = \"{uid}\"\\npassword = \"{pw}\"\\n'
+          toml = f'[default]\nusername = "{uid}"\npassword = "{pw}"\n'
           with open(os.path.expanduser('~/.dhapi/credentials'), 'w') as f:
               f.write(toml)
           "
           chmod 600 ~/.dhapi/credentials
 
-      - name: Buy Lotto 6/45 (진원님 선택 ×5)
+      - name: Buy Lotto 6/45 (Strategy C diversified)
         id: purchase
         env:
           DRY_RUN: ${{ vars.DRY_RUN || 'true' }}
         run: |
-          echo "=== Lotto 6/45 — 진원님 선택 ×5 ==="
-          echo "번호: 4, 6, 7, 11, 12, 23"
-          echo "근거: 당첨금 분할 리스크 최소화 (인기번호 회피)"
-          echo "전략: 5게임 동일 번호 → 1등 시 당첨금 ×5"
+          echo "=== Lotto 6/45 — Strategy C diversified anti-crowd ==="
+          echo "게임 1: 2,19,31,33,40,44"
+          echo "게임 2: 5,21,28,35,39,43"
+          echo "게임 3: 8,23,30,32,37,42"
+          echo "게임 4: 10,24,29,36,38,41"
+          echo "게임 5: 14,20,26,33,39,44"
+          echo "근거: TOP6/인기번호 몰빵의 공동당첨 분할 리스크 회피 + 1등 도달 확률 5배"
           echo ""
 
           if [ "$DRY_RUN" = "true" ]; then
-            echo "[DRY RUN] Would buy: 4,6,7,11,12,23 ×5"
+            echo "[DRY RUN] Would buy Strategy C diversified 5 games"
             echo "Set DRY_RUN=false in repo variables to enable real purchase"
             echo "dry_run=true" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          dhapi buy-lotto645 -m manual -n "4,6,7,11,12,23" -g 5 -y 2>&1
-          echo "=== 5게임 구매 완료 ==="
+          dhapi buy-lotto645 \
+            '2,19,31,33,40,44' \
+            '5,21,28,35,39,43' \
+            '8,23,30,32,37,42' \
+            '10,24,29,36,38,41' \
+            '14,20,26,33,39,44' \
+            -y 2>&1
+          echo "=== Strategy C 5게임 구매 완료 ==="
           echo "dry_run=false" >> $GITHUB_OUTPUT
 
       - name: Notify via Webhook
@@ -80,9 +89,9 @@ jobs:
           status = os.environ.get('JOB_STATUS', 'unknown')
 
           if dry_run == 'true':
-              msg = '🧪 [Lotto AutoBuy] DRY RUN — 진원님 선택'
+              msg = '🧪 [Lotto AutoBuy] DRY RUN — Strategy C diversified'
           elif status == 'success':
-              msg = '🎰 [Lotto AutoBuy] 5-game purchase complete!'
+              msg = '🎰 [Lotto AutoBuy] Strategy C 5-game purchase complete!'
           else:
               msg = f'❌ [Lotto AutoBuy] Purchase failed (status: {status})'
 
@@ -90,10 +99,16 @@ jobs:
               'message': msg,
               'status': 'success' if status == 'success' else 'error',
               'data': {
-                  'strategy': 'jinon-pick-5x',
-                  'numbers': '4,6,7,11,12,23',
+                  'strategy': 'strategy-c-anti-crowd-diversified',
+                  'numbers': [
+                      '2,19,31,33,40,44',
+                      '5,21,28,35,39,43',
+                      '8,23,30,32,37,42',
+                      '10,24,29,36,38,41',
+                      '14,20,26,33,39,44',
+                  ],
                   'games': 5,
-                  'note': '1등시 당첨금 ×5, 인기번호 회피로 분할 리스크 최소화',
+                  'note': 'TOP6/인기번호 몰빵의 공동당첨 분할 리스크 회피 + 1등 도달 확률 5배',
                   'dry_run': dry_run == 'true'
               }
           }).encode()
