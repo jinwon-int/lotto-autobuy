@@ -10,9 +10,9 @@
 └── Cron: 매주 토요일 22:00 KST → state의 구매번호 조회 → 당첨번호 비교 → Telegram 알림
 ```
 
-- **GitHub Actions는 폐기됨** — 대교가 직접 구매/확인 처리
+- **GitHub Actions 구매 workflow는 폐기/삭제됨** — 대교가 직접 구매/확인 처리
 - **비용**: $0/월 (Actions 예산 불필요)
-- GitHub Actions workflow는 `workflow_dispatch` 수동 fallback만 유지
+- 비상 fallback은 대교 운영자 승인 하에 Termux/Hermes 경로에서만 수행한다. GitHub Actions에서 실제 구매를 트리거하지 않는다.
 
 ## 구매 전략
 
@@ -74,7 +74,7 @@ DRY_RUN=true LOTTO_DRAW_NO=1229 LOTTO_STATE_FILE=/tmp/lotto-state.json python lo
 - `DRY_RUN=true `, `DRY_RUN=1`, 빈 값, 오타 등은 모두 fail-safe dry-run입니다.
 - dry-run state는 audit용이며 `lotto_check.py`는 실제 당첨 확인처럼 처리하지 않고 조용히 skip합니다.
 
-### 실제 구매 fallback
+### 실제 구매 fallback (대교/Termux 전용)
 
 ```bash
 DRY_RUN=false LOTTO_STATE_FILE=~/.hermes/state/lotto-last-purchase.json python lotto_buy.py
@@ -92,10 +92,10 @@ LOTTO_STATE_FILE=~/.hermes/state/lotto-last-purchase.json python lotto_check.py
 - **Hermes cronjob** — 스케줄링 및 알림 전달
 - **Telegram** — 구매/당첨 결과 알림
 
-## GitHub Actions (레거시, 수동 fallback용)
+## GitHub Actions
 
-`.github/workflows/lotto-buy.yml`은 `workflow_dispatch`로만 수동 트리거 가능.
-스케줄은 비활성화됨.
+로또 구매 GitHub Actions workflow는 삭제됐다. 수동 `workflow_dispatch` fallback은 더 이상 지원하지 않는다.
+정식 구매/확인 경로와 emergency owner는 대교 Hermes cronjob이며, 운영자는 대교 정비창에서 dry-run을 먼저 확인한 뒤 승인된 경우에만 `DRY_RUN=false`를 사용한다.
 
 ## 번호 변경 이력
 
