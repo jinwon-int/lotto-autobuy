@@ -90,6 +90,34 @@ def evaluate_games(games: Iterable[Sequence[int]], winning_numbers: set[int], bo
     return wins
 
 
+def evaluate_all_games(
+    games: Iterable[Sequence[int]], winning_numbers: set[int], bonus: int
+) -> list[dict]:
+    """Per-game outcomes including no-win entries.
+
+    Same shape as ``evaluate_games`` entries, but ``rank`` is ``None`` when the
+    game did not place. Used by ``main()`` to render a complete result table so
+    the no-agent cron delivery path is never silent on no-win weeks (regression
+    of PR #9 introduced when Strategy C v2 added the underscore checker in #11).
+    """
+    outcomes: list[dict] = []
+    for index, game in enumerate(games, start=1):
+        game_set = set(map(int, game))
+        matched = sorted(game_set & winning_numbers)
+        has_bonus = bonus in game_set
+        rank = check_rank(len(matched), has_bonus)
+        outcomes.append(
+            {
+                "index": index,
+                "game": sorted(game_set),
+                "matched": matched,
+                "has_bonus": has_bonus,
+                "rank": rank,
+            }
+        )
+    return outcomes
+
+
 def build_win_message(state: dict, result: dict, wins: list[dict]) -> str:
     lines = [
         f"🎰 [{result['draw_date']}] 제{result['draw_no']}회 로또 6/45 당첨 확인",
@@ -104,6 +132,36 @@ def build_win_message(state: dict, result: dict, wins: list[dict]) -> str:
             f"맞춘 번호 {win['matched']} ({len(win['matched'])}개), "
             f"보너스 {'O' if win['has_bonus'] else 'X'} → {win['rank']}"
         )
+    return "\n".join(lines)
+
+
+def build_result_message(state: dict, result: dict, outcomes: list[dict]) -> str:
+    """Always-on result report (header + every game's outcome, no-win included).
+
+    Mirrors the spirit of PR #9 ("fix: lotto-check always report result, never
+    silent") for the Strategy C v2 underscore checker. The no-agent cron
+    delivery path treats empty stdout as nothing to send, so a silent no-win
+    week looked like a broken cron.
+    """
+    lines = [
+        f"🎰 [{result['draw_date']}] 제{result['draw_no']}회 로또 6/45 당첨 확인",
+        f"전략: {state['strategy']}",
+        f"구매상태: {state.get('status', 'unknown')} / 구매회차: {state['draw_no']}",
+        f"당첨번호: {', '.join(map(str, sorted(result['numbers'])))} + 보너스 {result['bonus']}",
+        f"1등 당첨금: {result.get('prize_1st', 0):,}원 / 1등 당첨자: {result.get('winners_1st', 0)}명",
+    ]
+    win_count = 0
+    for outcome in outcomes:
+        rank = outcome["rank"]
+        if rank:
+            win_count += 1
+        tag = rank if rank else "꽝"
+        lines.append(
+            f"게임 {outcome['index']}: {','.join(map(str, outcome['game']))} → "
+            f"맞춘 번호 {outcome['matched']} ({len(outcome['matched'])}개), "
+            f"보너스 {'O' if outcome['has_bonus'] else 'X'} → {tag}"
+        )
+    lines.append(f"총평: 당첨 {win_count}건 / 총 {len(outcomes)}게임")
     return "\n".join(lines)
 
 
@@ -144,9 +202,8 @@ def main() -> int:
         print(f"❌ 구매회차({state['draw_no']})와 당첨회차({result['draw_no']}) 불일치")
         return 1
 
-    wins = evaluate_games(state["games"], result["numbers"], result["bonus"])
-    if wins:
-        print(build_win_message(state, result, wins))
+    outcomes = evaluate_all_games(state["games"], result["numbers"], result["bonus"])
+    print(build_result_message(state, result, outcomes))
     return 0
 
 
