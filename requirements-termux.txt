@@ -1,0 +1,19 @@
+# Runtime dependencies for the dedicated Termux lotto virtualenv.
+#
+# dhapi 4.2.4 pins several stale transitive versions, including
+# pycryptodome 3.19.0, which may not build on current Termux/Python. Install
+# this file first, then install dhapi itself with --no-deps as done by
+# scripts/bootstrap-termux.sh.
+beautifulsoup4>=4.12,<5
+click==8.1.8
+html5lib>=1.1,<2
+mailjet-rest>=1.3,<2
+pycryptodome>=3.20,<4
+pytz>=2024.1
+requests>=2.31,<3
+rich>=13.7,<15
+setuptools>=69
+tomli>=2,<3
+tomli-w>=1,<2
+typer==0.9.0
+PyYAML>=6,<7

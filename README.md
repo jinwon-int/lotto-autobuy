@@ -2,11 +2,11 @@
 
 동행복권 로또 6/45 자동 구매 + 당첨 확인 시스템.
 
-## 현재 아키텍처 (2026-06-20~)
+## 현재 아키텍처 (2026-07-31~)
 
 ```
-대교 (Seo S23 Ultra, Termux + Hermes)
-├── Cron: 매주 토요일 18:00 KST → Strategy C v2 조합 생성 → dhapi buy-lotto645 → state 저장
+대교 (Seo S23 Ultra, Termux + ccc-node)
+├── Cron: 매주 금요일 13:00 KST → lotto-buy-live.sh → Strategy C v2 조합 생성 → dhapi buy-lotto645 → state 저장
 └── Cron: 매주 토요일 22:00 KST → state의 구매번호 조회 → 당첨번호 비교 → Telegram 알림
 ```
 
@@ -24,7 +24,7 @@
 | 목표 | “인생 역전 대박”을 노리되, TOP6/인기번호 몰빵의 공동당첨 분할 리스크 회피 |
 | 1등 도달 확률 | 서로 다른 5조합 기준 `5 / 8,145,060` |
 | 주간 비용 | 5,000원 (5게임 × 1,000원) |
-| 운영 경로 | 대교 Hermes cronjob에서 `lotto_buy.py` 또는 동등 로직 실행 |
+| 운영 경로 | 대교 Linux crontab에서 `lotto-buy-live.sh` → `lotto_buy.py` 실행 |
 | state 파일 | 기본 `~/.hermes/state/lotto-last-purchase.json` |
 
 ## Strategy C v2 설계
@@ -77,8 +77,21 @@ DRY_RUN=true LOTTO_DRAW_NO=1229 LOTTO_STATE_FILE=/tmp/lotto-state.json python lo
 ### 실제 구매 fallback (대교/Termux 전용)
 
 ```bash
-DRY_RUN=false LOTTO_STATE_FILE=~/.hermes/state/lotto-last-purchase.json python lotto_buy.py
+./lotto-buy-live.sh
 ```
+
+`lotto-buy-live.sh`는 다른 서비스의 venv나 시스템 Python에 의존하지 않고
+`~/.hermes/venvs/lotto`의 전용 런타임만 사용합니다. Termux 재설치 또는 Python
+업그레이드 후에는 저장소 루트에서 다음 명령으로 런타임을 복구합니다.
+
+```bash
+./scripts/bootstrap-termux.sh
+```
+
+bootstrap은 `dhapi` 4.2.4의 오래된 `pycryptodome` pin을 그대로 설치하지 않고,
+현재 Termux에서 빌드 가능한 호환 런타임 의존성을 먼저 설치한 뒤 `dhapi`를
+`--no-deps`로 설치합니다. 실제 구매 전에는 owner-only
+`~/.dhapi/credentials`가 별도로 존재해야 합니다.
 
 ### 당첨 확인
 
@@ -89,7 +102,8 @@ LOTTO_STATE_FILE=~/.hermes/state/lotto-last-purchase.json python lotto_check.py
 ## 기술 스택
 
 - **[dhapi](https://github.com/roeniss/dhlottery-api)** v4.2.4 — 동행복권 비공식 API
-- **Hermes cronjob** — 스케줄링 및 알림 전달
+- **Linux crontab** — 스케줄링
+- **ccc-node/Telegram wrapper** — 실행 결과 알림 전달
 - **Telegram** — 구매/당첨 결과 알림
 
 ## GitHub Actions
