@@ -119,3 +119,7 @@ LOTTO_STATE_FILE=~/.hermes/state/lotto-last-purchase.json python lotto_check.py
 | 2026-06-20 | 2,19,31,33,40,44 / 5,21,28,35,39,43 / 8,23,30,32,37,42 / 10,24,29,36,38,41 / 14,20,26,33,39,44 | Strategy C v1: 비인기 패턴 회피 + 분산 5조합 | TOP6 인기번호 몰빵의 공동당첨 분할 리스크 회피, 1등 도달 확률 5배 확보 |
 | 2026-06-20 | 4,6,7,11,12,23 | 동일 ×5 | 인기번호 회피, 분할 리스크 최소화 |
 | 2026-06-19 | 34,27,13,12,45,18 | 동일 ×5 | TOP 6 최다 출현 |
+
+## Offline CI
+
+Pull requests and main-branch pushes compile tracked Python and check Bash syntax without importing or executing operational entry points. Existing unittest regressions use mocked network/purchase commands and temporary state; no scheduled purchase job is added. No deployment or service restart is performed by this workflow.
