@@ -30,6 +30,18 @@ from lotto_strategy import (
     save_purchase_state,
 )
 
+DHAPI_EXPRY_WRAPPER = Path(__file__).resolve().parent / "dhapi_expry_defer.py"
+
+
+def dhapi_exec_command(dhapi_command: List[str]) -> List[str]:
+    """Run dhapi through the ExpryPswdNoti deferral wrapper.
+
+    State still stores the original `dhapi buy-lotto645 ...` argv.
+    """
+    if not dhapi_command or dhapi_command[0] != "dhapi":
+        raise ValueError("expected dhapi command")
+    return [sys.executable, str(DHAPI_EXPRY_WRAPPER), *dhapi_command[1:]]
+
 
 class LottoAutoBuy:
     def __init__(self):
@@ -179,7 +191,13 @@ class LottoAutoBuy:
             return True
 
         try:
-            result = subprocess.run(command, text=True, capture_output=True, check=True, timeout=120)
+            result = subprocess.run(
+                dhapi_exec_command(command),
+                text=True,
+                capture_output=True,
+                check=True,
+                timeout=120,
+            )
         except subprocess.CalledProcessError as exc:
             self.notify(
                 "dhapi purchase failed",

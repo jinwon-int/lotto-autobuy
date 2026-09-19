@@ -33,7 +33,7 @@
 
 1. 구매 시점에 해당 회차 번호(`draw_no`)를 계산한다.
 2. `draw_no`를 seed로 사용해 **결정론적이지만 회차별로 달라지는** 5조합을 생성한다.
-3. `dhapi buy-lotto645 <game1> ... <game5> -y`로 구매한다.
+3. `dhapi buy-lotto645 <game1> ... <game5> -y`로 구매한다. 실행은 `dhapi_expry_defer.py` 래퍼를 거친다. 로그인 후 `/mbrsrvc/ExpryPswdNoti`가 뜨면 비밀번호를 바꾸지 않고 사이트의 **다음에 변경**과 같은 `POST /sy/updatePswdChgLate.do`(30일 연장)만 호출한 뒤 구매를 이어간다.
 4. 구매 성공 또는 dry-run 결과를 state 파일에 저장한다.
 5. 당첨 확인은 hard-coded 번호가 아니라 **state 파일의 해당 회차 구매번호**를 읽어 비교한다.
 
