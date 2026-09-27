@@ -231,6 +231,89 @@ class LottoCheckTest(unittest.TestCase):
         for losing_emoji in ("🎉🎉🎉", "🎊", "💰", "💵"):
             self.assertNotIn(losing_emoji, out)
 
+    def _purchased_state(self, tmp, draw_no=1229):
+        games = generate_strategy_c_games(draw_no=draw_no)
+        state_path = Path(tmp) / "lotto-last-purchase.json"
+        save_purchase_state(
+            state_path,
+            draw_no=draw_no,
+            games=games,
+            status="purchased",
+            command=build_dhapi_command(games),
+        )
+        return state_path
+
+    @staticmethod
+    def _draw_payload(draw_no):
+        return {
+            "data": {
+                "list": [
+                    {
+                        "ltEpsd": draw_no,
+                        "ltRflYmd": "20260620",
+                        "tm1WnNo": 1,
+                        "tm2WnNo": 2,
+                        "tm3WnNo": 3,
+                        "tm4WnNo": 4,
+                        "tm5WnNo": 5,
+                        "tm6WnNo": 6,
+                        "bnsWnNo": 7,
+                        "rnk1WnAmt": 1_500_000_000,
+                        "rnk1WnNope": 10,
+                    }
+                ]
+            }
+        }
+
+    def test_main_retries_until_purchased_draw_is_published(self):
+        # Regression guard (2026-09-26, draw 1243): the 22:00 run hit a publish
+        # lag, fell back to the previous draw, and only reported a mismatch.
+        # The checker must keep polling the purchased draw instead.
+        responses = [
+            self._draw_payload(1228),  # endpoint still serves the previous draw
+            {"data": {"list": []}},  # or nothing at all
+            self._draw_payload(1229),
+        ]
+        sleeps = []
+        with TemporaryDirectory() as tmp:
+            state_path = self._purchased_state(tmp)
+            stdout = io.StringIO()
+            with patch.dict("os.environ", {"LOTTO_CHECK_ATTEMPTS": "5", "LOTTO_CHECK_INTERVAL_SEC": "600"}), patch(
+                "lotto_check.default_state_path", return_value=state_path
+            ), patch(
+                "urllib.request.urlopen", side_effect=lambda req, timeout: FakeResponse(responses.pop(0))
+            ), patch("lotto_check.time.sleep", side_effect=sleeps.append), redirect_stdout(stdout):
+                rc = main()
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(sleeps, [600.0, 600.0])
+        out = stdout.getvalue()
+        self.assertIn("제1229회 로또 6/45 당첨 확인", out)
+        self.assertNotIn("불일치", out)
+
+    def test_main_reports_unpublished_draw_without_falling_back(self):
+        requested = []
+
+        def fake_urlopen(req, timeout):
+            requested.append(req.full_url)
+            return FakeResponse(self._draw_payload(1228))
+
+        with TemporaryDirectory() as tmp:
+            state_path = self._purchased_state(tmp)
+            stdout = io.StringIO()
+            with patch.dict("os.environ", {"LOTTO_CHECK_ATTEMPTS": "3", "LOTTO_CHECK_INTERVAL_SEC": "0"}), patch(
+                "lotto_check.default_state_path", return_value=state_path
+            ), patch("urllib.request.urlopen", side_effect=fake_urlopen), patch(
+                "lotto_check.time.sleep"
+            ), redirect_stdout(stdout):
+                rc = main()
+
+        self.assertEqual(rc, 1)
+        self.assertEqual(len(requested), 3)
+        # Every attempt targets the purchased draw; no fallback to other draws.
+        self.assertTrue(all("srchLtEpsd=1229" in url for url in requested))
+        self.assertIn("제1229회 당첨번호 미공개/조회 실패 (시도 3회", stdout.getvalue())
+
     def test_build_win_message_includes_state_draw_and_game(self):
         state = {
             "strategy": STRATEGY_ID,
