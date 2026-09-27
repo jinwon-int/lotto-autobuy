@@ -7,6 +7,7 @@ comparing stale hard-coded numbers after Strategy C starts changing every draw.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 import urllib.request
@@ -165,6 +166,40 @@ def build_result_message(state: dict, result: dict, outcomes: list[dict]) -> str
     return "\n".join(lines)
 
 
+def fetch_target_draw(
+    draw_no: int,
+    attempts: int | None = None,
+    interval_sec: float | None = None,
+    fetch=None,
+    sleep=None,
+) -> tuple[dict | None, int, str]:
+    """Poll until the purchased draw is published (publish can lag the draw).
+
+    Returns (result, attempts_used, last_error). The endpoint may either raise
+    or serve an older draw while the target is unpublished; both are retried.
+    """
+    attempts = attempts if attempts is not None else int(os.environ.get("LOTTO_CHECK_ATTEMPTS", "12"))
+    interval_sec = (
+        interval_sec if interval_sec is not None else float(os.environ.get("LOTTO_CHECK_INTERVAL_SEC", "600"))
+    )
+    fetch = fetch or get_winning_numbers
+    sleep = sleep or time.sleep  # resolve at call time so tests can patch it
+    attempts = max(1, attempts)
+    last_error = ""
+    for attempt in range(1, attempts + 1):
+        try:
+            result = fetch(draw_no)
+            if int(result["draw_no"]) == int(draw_no):
+                return result, attempt, ""
+            last_error = f"제{result['draw_no']}회 응답(미공개)"
+        except Exception as exc:  # network / empty list / parse error
+            last_error = f"{type(exc).__name__}: {str(exc)[:120]}"
+        if attempt < attempts:
+            # Stay quiet here: the cron wrapper merges stderr into the Telegram body.
+            sleep(interval_sec)
+    return None, attempts, last_error
+
+
 def main() -> int:
     state_path = default_state_path()
     try:
@@ -183,23 +218,15 @@ def main() -> int:
         return 0
 
     target_draw = int(state.get("draw_no") or latest_draw_no())
-    try:
-        result = get_winning_numbers(target_draw)
-    except Exception:
-        # If target draw is not available yet, try the latest calculated draw and
-        # then the previous draw. This mirrors the old no-agent fallback behavior.
-        for fallback in [latest_draw_no(), latest_draw_no() - 1]:
-            try:
-                result = get_winning_numbers(fallback)
-                break
-            except Exception:
-                result = None
-        if result is None:
-            print(f"❌ 당첨번호 조회 실패: draw {target_draw}")
-            return 1
-
-    if int(state["draw_no"]) != int(result["draw_no"]):
-        print(f"❌ 구매회차({state['draw_no']})와 당첨회차({result['draw_no']}) 불일치")
+    result, attempts, last_error = fetch_target_draw(target_draw)
+    if result is None:
+        # 2026-09-26: the 22:00 run hit a publish lag (draw 1243 not yet served)
+        # and the old fallback fetched the previous draw, which could only ever
+        # produce a mismatch. Retry the purchased draw instead of falling back.
+        print(
+            f"❌ 제{target_draw}회 당첨번호 미공개/조회 실패 "
+            f"(시도 {attempts}회, 마지막: {last_error})"
+        )
         return 1
 
     outcomes = evaluate_all_games(state["games"], result["numbers"], result["bonus"])
